@@ -18,12 +18,10 @@ object_filter (const char *obj_name)
 }
 
 static void
-_dump_object_list (int signal)
+_dump_object_list (void)
 {
   GHashTableIter iter;
   GObject *obj;
-
-  g_print ("Living Objects:\n");
 
   g_hash_table_iter_init (&iter, objects);
   while (g_hash_table_iter_next (&iter, (gpointer) &obj, NULL))
@@ -31,6 +29,14 @@ _dump_object_list (int signal)
       g_print (" - %p, %s: %u refs\n",
           obj, G_OBJECT_TYPE_NAME (obj), obj->ref_count);
     }
+}
+
+static void
+_sig_usr1_handler (int signal)
+{
+  g_print ("Living Objects:\n");
+
+  _dump_object_list ();
 }
 
 static void *
@@ -48,7 +54,7 @@ get_func (const char *func_name)
         g_error ("Failed to open libgobject-2.0.so.0: %s", dlerror ());
 
       /* set up signal handler */
-      signal (SIGUSR1, _dump_object_list);
+      signal (SIGUSR1, _sig_usr1_handler);
 
       /* set up objects map */
       objects = g_hash_table_new (NULL, NULL);
