@@ -2,8 +2,20 @@
 
 #include <dlfcn.h>
 #include <signal.h>
+#include <string.h>
 
 static GHashTable *objects = NULL;
+
+static gboolean
+object_filter (const char *obj_name)
+{
+  const char *filter = g_getenv ("GOBJECT_LIST_FILTER");
+
+  if (filter == NULL)
+    return TRUE;
+  else
+    return (strncmp (filter, obj_name, strlen (filter)) == 0);
+}
 
 static void
 _dump_object_list (int signal)
@@ -66,6 +78,7 @@ g_object_new (GType type,
   gpointer (* real_g_object_new_valist) (GType, const char *, va_list);
   va_list var_args;
   GObject *obj;
+  const char *obj_name;
 
   real_g_object_new_valist = get_func ("g_object_new_valist");
 
@@ -73,9 +86,12 @@ g_object_new (GType type,
   obj = real_g_object_new_valist (type, first, var_args);
   va_end (var_args);
 
-  if (g_hash_table_lookup (objects, obj) == NULL)
+  obj_name = G_OBJECT_TYPE_NAME (obj);
+
+  if (g_hash_table_lookup (objects, obj) == NULL &&
+      object_filter (obj_name))
     {
-      g_print (" ++ Created object %p, %s\n", obj, G_OBJECT_TYPE_NAME (obj));
+      g_print (" ++ Created object %p, %s\n", obj, obj_name);
 
       g_object_weak_ref (obj, _object_finalized, NULL);
 
