@@ -3,6 +3,7 @@
 #include <dlfcn.h>
 #include <signal.h>
 #include <string.h>
+#include <stdlib.h>
 
 static GHashTable *objects = NULL;
 
@@ -39,6 +40,14 @@ _sig_usr1_handler (int signal)
   _dump_object_list ();
 }
 
+static void
+_exiting (void)
+{
+  g_print ("\nStill Alive:\n");
+
+  _dump_object_list ();
+}
+
 static void *
 get_func (const char *func_name)
 {
@@ -58,6 +67,9 @@ get_func (const char *func_name)
 
       /* set up objects map */
       objects = g_hash_table_new (NULL, NULL);
+
+      /* Set up exit handler */
+      atexit (_exiting);
     }
 
   func = dlsym (handle, func_name);
