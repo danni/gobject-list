@@ -31,7 +31,77 @@
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
 
+typedef enum
+{
+  DISPLAY_FLAG_NONE = 0,
+  DISPLAY_FLAG_CREATE = 1,
+  DISPLAY_FLAG_REFS = 1 << 2,
+  DISPLAY_FLAG_BACKTRACE = 1 << 3,
+  DISPLAY_FLAG_ALL =
+      DISPLAY_FLAG_CREATE | DISPLAY_FLAG_REFS | DISPLAY_FLAG_BACKTRACE,
+  DISPLAY_FLAG_DEFAULT = DISPLAY_FLAG_CREATE,
+} DisplayFlags;
+
+typedef struct
+{
+  const gchar *name;
+  DisplayFlags flag;
+} DisplayFlagsMapItem;
+
+DisplayFlagsMapItem display_flags_map[] =
+{
+  { "none", DISPLAY_FLAG_NONE },
+  { "create", DISPLAY_FLAG_CREATE },
+  { "refs", DISPLAY_FLAG_REFS },
+  { "backtrace", DISPLAY_FLAG_BACKTRACE },
+  { "all", DISPLAY_FLAG_ALL },
+};
+
 static GHashTable *objects = NULL;
+
+static gboolean
+display_filter (DisplayFlags flags)
+{
+  static DisplayFlags display_flags = DISPLAY_FLAG_DEFAULT;
+  static gboolean parsed = FALSE;
+
+  if (!parsed)
+    {
+      const gchar *display = g_getenv ("GOBJECT_LIST_DISPLAY");
+
+      if (display != NULL)
+        {
+          gchar **tokens = g_strsplit (display, ",", 0);
+          guint len = g_strv_length (tokens);
+          guint i = 0;
+
+          /* If there really are items to parse, clear the default flags */
+          if (len > 0)
+            display_flags = 0;
+
+          for (; i < len; ++i)
+            {
+              gchar *token = tokens[i];
+              guint j = 0;
+
+              for (; j < G_N_ELEMENTS (display_flags_map); ++j)
+                {
+                  if (!g_ascii_strcasecmp (token, display_flags_map[j].name))
+                    {
+                      display_flags |= display_flags_map[j].flag;
+                      break;
+                    }
+                }
+            }
+
+          g_strfreev (tokens);
+        }
+
+      parsed = TRUE;
+    }
+
+  return (display_flags & flags) ? TRUE : FALSE;
+}
 
 static gboolean
 object_filter (const char *obj_name)
@@ -50,6 +120,9 @@ print_trace (void)
   unw_context_t uc;
   unw_cursor_t cursor;
   guint stack_num = 0;
+
+  if (!display_filter (DISPLAY_FLAG_BACKTRACE))
+    return;
 
   unw_getcontext (&uc);
   unw_init_local (&cursor, &uc);
@@ -135,8 +208,12 @@ static void
 _object_finalized (gpointer data,
     GObject *obj)
 {
-  g_print (" -- Finalized object %p, %s\n", obj, G_OBJECT_TYPE_NAME (obj));
-  print_trace();
+  if (display_filter (DISPLAY_FLAG_CREATE))
+    {
+      g_print (" -- Finalized object %p, %s\n", obj, G_OBJECT_TYPE_NAME (obj));
+      print_trace();
+    }
+
   g_hash_table_remove (objects, obj);
 }
 
@@ -161,8 +238,11 @@ g_object_new (GType type,
   if (g_hash_table_lookup (objects, obj) == NULL &&
       object_filter (obj_name))
     {
-      g_print (" ++ Created object %p, %s\n", obj, obj_name);
-      print_trace();
+      if (display_filter (DISPLAY_FLAG_CREATE))
+        {
+          g_print (" ++ Created object %p, %s\n", obj, obj_name);
+          print_trace();
+        }
 
       g_object_weak_ref (obj, _object_finalized, NULL);
 
@@ -188,7 +268,7 @@ g_object_ref (gpointer object)
   ref_count = obj->ref_count;
   ret = real_g_object_ref (object);
 
-  if (object_filter (obj_name))
+  if (object_filter (obj_name) && display_filter (DISPLAY_FLAG_REFS))
     {
       g_print (" +  Reffed object %p, %s; ref_count: %d -> %d\n",
           obj, obj_name, ref_count, obj->ref_count);
@@ -209,7 +289,7 @@ g_object_unref (gpointer object)
 
   obj_name = G_OBJECT_TYPE_NAME (obj);
 
-  if (object_filter (obj_name))
+  if (object_filter (obj_name) && display_filter (DISPLAY_FLAG_REFS))
     {
       g_print (" -  Unreffed object %p, %s; ref_count: %d -> %d\n",
           obj, obj_name, obj->ref_count, obj->ref_count - 1);
