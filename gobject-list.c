@@ -28,6 +28,9 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define UNW_LOCAL_ONLY
+#include <libunwind.h>
+
 static GHashTable *objects = NULL;
 
 static gboolean
@@ -39,6 +42,31 @@ object_filter (const char *obj_name)
     return TRUE;
   else
     return (strncmp (filter, obj_name, strlen (filter)) == 0);
+}
+
+static void
+print_trace (void)
+{
+  unw_context_t uc;
+  unw_cursor_t cursor;
+  guint stack_num = 0;
+
+  unw_getcontext (&uc);
+  unw_init_local (&cursor, &uc);
+
+  while (unw_step (&cursor) > 0)
+    {
+      gchar name[65];
+      unw_word_t off;
+
+      if (unw_get_proc_name (&cursor, name, 64, &off) < 0)
+        {
+          g_print ("Error getting proc name\n");
+          break;
+        }
+
+      g_print ("#%d  %s + [0x%08x]\n", stack_num++, name, (unsigned int)off);
+    }
 }
 
 static void
@@ -108,6 +136,7 @@ _object_finalized (gpointer data,
     GObject *obj)
 {
   g_print (" -- Finalized object %p, %s\n", obj, G_OBJECT_TYPE_NAME (obj));
+  print_trace();
   g_hash_table_remove (objects, obj);
 }
 
@@ -133,6 +162,7 @@ g_object_new (GType type,
       object_filter (obj_name))
     {
       g_print (" ++ Created object %p, %s\n", obj, obj_name);
+      print_trace();
 
       g_object_weak_ref (obj, _object_finalized, NULL);
 
@@ -162,6 +192,7 @@ g_object_ref (gpointer object)
     {
       g_print (" +  Reffed object %p, %s; ref_count: %d -> %d\n",
           obj, obj_name, ref_count, obj->ref_count);
+      print_trace();
     }
 
   return ret;
@@ -182,6 +213,7 @@ g_object_unref (gpointer object)
     {
       g_print (" -  Unreffed object %p, %s; ref_count: %d -> %d\n",
           obj, obj_name, obj->ref_count, obj->ref_count - 1);
+      print_trace();
     }
 
   real_g_object_unref (object);
