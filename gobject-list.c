@@ -141,3 +141,48 @@ g_object_new (GType type,
 
   return obj;
 }
+
+gpointer
+g_object_ref (gpointer object)
+{
+  gpointer (* real_g_object_ref) (gpointer);
+  GObject *obj = G_OBJECT (object);
+  const char *obj_name;
+  guint ref_count;
+  GObject *ret;
+
+  real_g_object_ref = get_func ("g_object_ref");
+
+  obj_name = G_OBJECT_TYPE_NAME (obj);
+
+  ref_count = obj->ref_count;
+  ret = real_g_object_ref (object);
+
+  if (object_filter (obj_name))
+    {
+      g_print (" +  Reffed object %p, %s; ref_count: %d -> %d\n",
+          obj, obj_name, ref_count, obj->ref_count);
+    }
+
+  return ret;
+}
+
+void
+g_object_unref (gpointer object)
+{
+  void (* real_g_object_unref) (gpointer);
+  GObject *obj = G_OBJECT (object);
+  const char *obj_name;
+
+  real_g_object_unref = get_func ("g_object_unref");
+
+  obj_name = G_OBJECT_TYPE_NAME (obj);
+
+  if (object_filter (obj_name))
+    {
+      g_print (" -  Unreffed object %p, %s; ref_count: %d -> %d\n",
+          obj, obj_name, obj->ref_count, obj->ref_count - 1);
+    }
+
+  real_g_object_unref (object);
+}
