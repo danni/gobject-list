@@ -28,8 +28,10 @@
 #include <string.h>
 #include <stdlib.h>
 
+#ifdef HAVE_LIBUNWIND
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
+#endif
 
 typedef enum
 {
@@ -117,6 +119,7 @@ object_filter (const char *obj_name)
 static void
 print_trace (void)
 {
+#ifdef HAVE_LIBUNWIND
   unw_context_t uc;
   unw_cursor_t cursor;
   guint stack_num = 0;
@@ -154,6 +157,7 @@ _dump_object_list (void)
       g_print (" - %p, %s: %u refs\n",
           obj, G_OBJECT_TYPE_NAME (obj), obj->ref_count);
     }
+#endif
 }
 
 static void
