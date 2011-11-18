@@ -134,8 +134,10 @@ print_trace (void)
     {
       gchar name[65];
       unw_word_t off;
+      int result;
 
-      if (unw_get_proc_name (&cursor, name, 64, &off) < 0)
+      result = unw_get_proc_name (&cursor, name, 64, &off);
+      if (result < 0 && result != UNW_ENOMEM)
         {
           g_print ("Error getting proc name\n");
           break;
