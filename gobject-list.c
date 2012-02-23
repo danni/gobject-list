@@ -148,12 +148,12 @@ print_trace (void)
 }
 
 static void
-_dump_object_list (void)
+_dump_object_list (GHashTable *hash)
 {
   GHashTableIter iter;
   GObject *obj;
 
-  g_hash_table_iter_init (&iter, objects);
+  g_hash_table_iter_init (&iter, hash);
   while (g_hash_table_iter_next (&iter, (gpointer) &obj, NULL))
     {
       g_print (" - %p, %s: %u refs\n",
@@ -167,7 +167,7 @@ _sig_usr1_handler (int signal)
 {
   g_print ("Living Objects:\n");
 
-  _dump_object_list ();
+  _dump_object_list (objects);
 }
 
 static void
@@ -175,7 +175,7 @@ _exiting (void)
 {
   g_print ("\nStill Alive:\n");
 
-  _dump_object_list ();
+  _dump_object_list (objects);
 }
 
 static void *
