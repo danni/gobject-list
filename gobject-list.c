@@ -168,6 +168,7 @@ _dump_object_list (GHashTable *hash)
       g_print (" - %p, %s: %u refs\n",
           obj, G_OBJECT_TYPE_NAME (obj), obj->ref_count);
     }
+  g_print ("%u objects\n", g_hash_table_size (hash));
 #endif
 }
 
@@ -194,6 +195,7 @@ _sig_usr2_handler (int signal)
     {
       g_print (" - %p, %s\n", obj, (gchar *) type);
     }
+  g_print ("%u objects\n", g_hash_table_size (removed));
 
   g_hash_table_remove_all (added);
   g_hash_table_remove_all (removed);
