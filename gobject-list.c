@@ -235,6 +235,12 @@ get_func (const char *func_name)
 
       /* Set up exit handler */
       atexit (_exiting);
+
+      /* Prevent propagation to child processes. */
+      if (g_getenv ("GOBJECT_PROPAGATE_LD_PRELOAD") == NULL)
+        {
+          g_unsetenv ("LD_PRELOAD");
+        }
     }
 
   func = dlsym (handle, func_name);
