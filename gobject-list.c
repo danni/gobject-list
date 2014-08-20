@@ -59,16 +59,21 @@ DisplayFlagsMapItem display_flags_map[] =
   { "all", DISPLAY_FLAG_ALL },
 };
 
-static GHashTable *objects = NULL;
+typedef struct {
+  GHashTable *objects;  /* owned */
 
-/* Those 2 hash tables contains the objects which have been added/removed
- * since the last time we catched the USR2 signal (check point). */
-static GHashTable *added = NULL;
-/* GObject -> (gchar *) type
- *
- * We keep the string representing the type of the object as we won't be able
- * to get it when displaying later as the object would have been destroyed. */
-static GHashTable *removed = NULL;
+  /* Those 2 hash tables contains the objects which have been added/removed
+   * since the last time we catched the USR2 signal (check point). */
+  GHashTable *added;  /* owned */
+  /* GObject -> (gchar *) type
+   *
+   * We keep the string representing the type of the object as we won't be able
+   * to get it when displaying later as the object would have been destroyed. */
+  GHashTable *removed;  /* owned */
+} ObjectData;
+
+static ObjectData gobject_list_state = { NULL, };
+
 
 static gboolean
 display_filter (DisplayFlags flags)
@@ -177,7 +182,7 @@ _sig_usr1_handler (int signal)
 {
   g_print ("Living Objects:\n");
 
-  _dump_object_list (objects);
+  _dump_object_list (gobject_list_state.objects);
 }
 
 static void
@@ -187,18 +192,18 @@ _sig_usr2_handler (int signal)
   gpointer obj, type;
 
   g_print ("Added Objects:\n");
-  _dump_object_list (added);
+  _dump_object_list (gobject_list_state.added);
 
   g_print ("\nRemoved Objects:\n");
-  g_hash_table_iter_init (&iter, removed);
+  g_hash_table_iter_init (&iter, gobject_list_state.removed);
   while (g_hash_table_iter_next (&iter, &obj, &type))
     {
       g_print (" - %p, %s\n", obj, (gchar *) type);
     }
-  g_print ("%u objects\n", g_hash_table_size (removed));
+  g_print ("%u objects\n", g_hash_table_size (gobject_list_state.removed));
 
-  g_hash_table_remove_all (added);
-  g_hash_table_remove_all (removed);
+  g_hash_table_remove_all (gobject_list_state.added);
+  g_hash_table_remove_all (gobject_list_state.removed);
   g_print ("\nSaved new check point\n");
 }
 
@@ -207,7 +212,7 @@ _exiting (void)
 {
   g_print ("\nStill Alive:\n");
 
-  _dump_object_list (objects);
+  _dump_object_list (gobject_list_state.objects);
 }
 
 static void *
@@ -229,9 +234,9 @@ get_func (const char *func_name)
       signal (SIGUSR2, _sig_usr2_handler);
 
       /* set up objects map */
-      objects = g_hash_table_new (NULL, NULL);
-      added = g_hash_table_new (NULL, NULL);
-      removed = g_hash_table_new_full (NULL, NULL, NULL, g_free);
+      gobject_list_state.objects = g_hash_table_new (NULL, NULL);
+      gobject_list_state.added = g_hash_table_new (NULL, NULL);
+      gobject_list_state.removed = g_hash_table_new_full (NULL, NULL, NULL, g_free);
 
       /* Set up exit handler */
       atexit (_exiting);
@@ -262,12 +267,13 @@ _object_finalized (gpointer data,
 
       /* Only care about the object which were already existing during last
        * check point. */
-      if (g_hash_table_lookup (added, obj) == NULL)
-        g_hash_table_insert (removed, obj, g_strdup (G_OBJECT_TYPE_NAME (obj)));
+      if (g_hash_table_lookup (gobject_list_state.added, obj) == NULL)
+        g_hash_table_insert (gobject_list_state.removed, obj,
+            g_strdup (G_OBJECT_TYPE_NAME (obj)));
     }
 
-  g_hash_table_remove (objects, obj);
-  g_hash_table_remove (added, obj);
+  g_hash_table_remove (gobject_list_state.objects, obj);
+  g_hash_table_remove (gobject_list_state.added, obj);
 }
 
 gpointer
@@ -288,7 +294,7 @@ g_object_new (GType type,
 
   obj_name = G_OBJECT_TYPE_NAME (obj);
 
-  if (g_hash_table_lookup (objects, obj) == NULL &&
+  if (g_hash_table_lookup (gobject_list_state.objects, obj) == NULL &&
       object_filter (obj_name))
     {
       if (display_filter (DISPLAY_FLAG_CREATE))
@@ -299,8 +305,10 @@ g_object_new (GType type,
 
       g_object_weak_ref (obj, _object_finalized, NULL);
 
-      g_hash_table_insert (objects, obj, GUINT_TO_POINTER (TRUE));
-      g_hash_table_insert (added, obj, GUINT_TO_POINTER (TRUE));
+      g_hash_table_insert (gobject_list_state.objects, obj,
+          GUINT_TO_POINTER (TRUE));
+      g_hash_table_insert (gobject_list_state.added, obj,
+          GUINT_TO_POINTER (TRUE));
     }
 
   return obj;
