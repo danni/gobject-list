@@ -1,7 +1,7 @@
 /*
  * gobject-list: a LD_PRELOAD library for tracking the lifetime of GObjects
  *
- * Copyright (C) 2011  Collabora Ltd.
+ * Copyright (C) 2011, 2014  Collabora Ltd.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -20,6 +20,7 @@
  *
  * Authors:
  *     Danielle Madeley  <danielle.madeley@collabora.co.uk>
+ *     Philip Withnall  <philip.withnall@collabora.co.uk>
  */
 #include <glib-object.h>
 
@@ -72,7 +73,13 @@ typedef struct {
   GHashTable *removed;  /* owned */
 } ObjectData;
 
-static ObjectData gobject_list_state = { NULL, };
+/* Global static state, which must be accessed with the @gobject_list mutex
+ * held. */
+static volatile ObjectData gobject_list_state = { NULL, };
+
+/* Global lock protecting access to @gobject_list_state, since GObject methods
+ * may be called from multiple threads concurrently. */
+G_LOCK_DEFINE_STATIC (gobject_list);
 
 
 static gboolean
@@ -182,7 +189,9 @@ _sig_usr1_handler (int signal)
 {
   g_print ("Living Objects:\n");
 
+  G_LOCK (gobject_list);
   _dump_object_list (gobject_list_state.objects);
+  G_UNLOCK (gobject_list);
 }
 
 static void
@@ -190,6 +199,8 @@ _sig_usr2_handler (int signal)
 {
   GHashTableIter iter;
   gpointer obj, type;
+
+  G_LOCK (gobject_list);
 
   g_print ("Added Objects:\n");
   _dump_object_list (gobject_list_state.added);
@@ -205,6 +216,8 @@ _sig_usr2_handler (int signal)
   g_hash_table_remove_all (gobject_list_state.added);
   g_hash_table_remove_all (gobject_list_state.removed);
   g_print ("\nSaved new check point\n");
+
+  G_UNLOCK (gobject_list);
 }
 
 static void
@@ -212,7 +225,9 @@ _exiting (void)
 {
   g_print ("\nStill Alive:\n");
 
+  G_LOCK (gobject_list);
   _dump_object_list (gobject_list_state.objects);
+  G_UNLOCK (gobject_list);
 }
 
 static void *
@@ -222,11 +237,13 @@ get_func (const char *func_name)
   void *func;
   char *error;
 
-  if (G_UNLIKELY (handle == NULL))
+  if (G_UNLIKELY (g_once_init_enter (&handle)))
     {
-      handle = dlopen("libgobject-2.0.so.0", RTLD_LAZY);
+      void *_handle;
 
-      if (handle == NULL)
+      _handle = dlopen("libgobject-2.0.so.0", RTLD_LAZY);
+
+      if (_handle == NULL)
         g_error ("Failed to open libgobject-2.0.so.0: %s", dlerror ());
 
       /* set up signal handlers */
@@ -246,12 +263,16 @@ get_func (const char *func_name)
         {
           g_unsetenv ("LD_PRELOAD");
         }
+
+      g_once_init_leave (&handle, _handle);
     }
 
   func = dlsym (handle, func_name);
 
   if ((error = dlerror ()) != NULL)
     g_error ("Failed to find symbol: %s", error);
+
+  G_UNLOCK (gobject_list);
 
   return func;
 }
@@ -260,6 +281,8 @@ static void
 _object_finalized (gpointer data,
     GObject *obj)
 {
+  G_LOCK (gobject_list);
+
   if (display_filter (DISPLAY_FLAG_CREATE))
     {
       g_print (" -- Finalized object %p, %s\n", obj, G_OBJECT_TYPE_NAME (obj));
@@ -274,6 +297,8 @@ _object_finalized (gpointer data,
 
   g_hash_table_remove (gobject_list_state.objects, obj);
   g_hash_table_remove (gobject_list_state.added, obj);
+
+  G_UNLOCK (gobject_list);
 }
 
 gpointer
@@ -294,6 +319,8 @@ g_object_new (GType type,
 
   obj_name = G_OBJECT_TYPE_NAME (obj);
 
+  G_LOCK (gobject_list);
+
   if (g_hash_table_lookup (gobject_list_state.objects, obj) == NULL &&
       object_filter (obj_name))
     {
@@ -310,6 +337,8 @@ g_object_new (GType type,
       g_hash_table_insert (gobject_list_state.added, obj,
           GUINT_TO_POINTER (TRUE));
     }
+
+  G_UNLOCK (gobject_list);
 
   return obj;
 }
