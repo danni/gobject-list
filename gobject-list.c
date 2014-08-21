@@ -177,6 +177,10 @@ _dump_object_list (GHashTable *hash)
   g_hash_table_iter_init (&iter, hash);
   while (g_hash_table_iter_next (&iter, (gpointer) &obj, NULL))
     {
+      /* FIXME: Not really sure how we get to this state. */
+      if (obj == NULL || obj->ref_count == 0)
+        continue;
+
       g_print (" - %p, %s: %u refs\n",
           obj, G_OBJECT_TYPE_NAME (obj), obj->ref_count);
     }
@@ -330,6 +334,19 @@ g_object_new (GType type,
           print_trace();
         }
 
+      /* FIXME: For thread safety, GWeakRef should be used here, except it
+       * won’t give us notify callbacks. Perhaps an opportunistic combination
+       * of GWeakRef and g_object_weak_ref() — the former for safety, the latter
+       * for notifications (with the knowledge that due to races, some
+       * notifications may get omitted)?
+       *
+       * Alternatively, we could abuse GToggleRef. Inadvisable because other
+       * code could be using it.
+       *
+       * Alternatively, we could switch to a garbage-collection style of
+       * working, where gobject-list runs in its own thread and uses GWeakRefs
+       * to keep track of objects. Periodically, it would check the hash table
+       * and notify of which references have been nullified. */
       g_object_weak_ref (obj, _object_finalized, NULL);
 
       g_hash_table_insert (gobject_list_state.objects, obj,
