@@ -17,6 +17,11 @@ kill -SIGUSR2 `pidof my-app`  # create a checkpoint and print a list of objects
                               # created and destroyed since the previous
                               # checkpoint
 
+If running your application within a debugger, you can list the currently alive
+objects at any point by manually sending the SIGUSR1 signal. e.g. In gdb:
+    handle SIGUSR1 nostop  # do this once, at startup
+    signal SIGUSR1
+
 
 Environment variables
 ---------------------

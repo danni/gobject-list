@@ -1,7 +1,7 @@
 /*
  * gobject-list: a LD_PRELOAD library for tracking the lifetime of GObjects
  *
- * Copyright (C) 2011  Collabora Ltd.
+ * Copyright (C) 2011, 2014  Collabora Ltd.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -20,6 +20,7 @@
  *
  * Authors:
  *     Danielle Madeley  <danielle.madeley@collabora.co.uk>
+ *     Philip Withnall  <philip.withnall@collabora.co.uk>
  */
 #include <glib-object.h>
 
@@ -59,16 +60,27 @@ DisplayFlagsMapItem display_flags_map[] =
   { "all", DISPLAY_FLAG_ALL },
 };
 
-static GHashTable *objects = NULL;
+typedef struct {
+  GHashTable *objects;  /* owned */
 
-/* Those 2 hash tables contains the objects which have been added/removed
- * since the last time we catched the USR2 signal (check point). */
-static GHashTable *added = NULL;
-/* GObject -> (gchar *) type
- *
- * We keep the string representing the type of the object as we won't be able
- * to get it when displaying later as the object would have been destroyed. */
-static GHashTable *removed = NULL;
+  /* Those 2 hash tables contains the objects which have been added/removed
+   * since the last time we catched the USR2 signal (check point). */
+  GHashTable *added;  /* owned */
+  /* GObject -> (gchar *) type
+   *
+   * We keep the string representing the type of the object as we won't be able
+   * to get it when displaying later as the object would have been destroyed. */
+  GHashTable *removed;  /* owned */
+} ObjectData;
+
+/* Global static state, which must be accessed with the @gobject_list mutex
+ * held. */
+static volatile ObjectData gobject_list_state = { NULL, };
+
+/* Global lock protecting access to @gobject_list_state, since GObject methods
+ * may be called from multiple threads concurrently. */
+G_LOCK_DEFINE_STATIC (gobject_list);
+
 
 static gboolean
 display_filter (DisplayFlags flags)
@@ -165,6 +177,10 @@ _dump_object_list (GHashTable *hash)
   g_hash_table_iter_init (&iter, hash);
   while (g_hash_table_iter_next (&iter, (gpointer) &obj, NULL))
     {
+      /* FIXME: Not really sure how we get to this state. */
+      if (obj == NULL || obj->ref_count == 0)
+        continue;
+
       g_print (" - %p, %s: %u refs\n",
           obj, G_OBJECT_TYPE_NAME (obj), obj->ref_count);
     }
@@ -177,7 +193,9 @@ _sig_usr1_handler (int signal)
 {
   g_print ("Living Objects:\n");
 
-  _dump_object_list (objects);
+  G_LOCK (gobject_list);
+  _dump_object_list (gobject_list_state.objects);
+  G_UNLOCK (gobject_list);
 }
 
 static void
@@ -186,20 +204,24 @@ _sig_usr2_handler (int signal)
   GHashTableIter iter;
   gpointer obj, type;
 
+  G_LOCK (gobject_list);
+
   g_print ("Added Objects:\n");
-  _dump_object_list (added);
+  _dump_object_list (gobject_list_state.added);
 
   g_print ("\nRemoved Objects:\n");
-  g_hash_table_iter_init (&iter, removed);
+  g_hash_table_iter_init (&iter, gobject_list_state.removed);
   while (g_hash_table_iter_next (&iter, &obj, &type))
     {
       g_print (" - %p, %s\n", obj, (gchar *) type);
     }
-  g_print ("%u objects\n", g_hash_table_size (removed));
+  g_print ("%u objects\n", g_hash_table_size (gobject_list_state.removed));
 
-  g_hash_table_remove_all (added);
-  g_hash_table_remove_all (removed);
+  g_hash_table_remove_all (gobject_list_state.added);
+  g_hash_table_remove_all (gobject_list_state.removed);
   g_print ("\nSaved new check point\n");
+
+  G_UNLOCK (gobject_list);
 }
 
 static void
@@ -207,7 +229,9 @@ _exiting (void)
 {
   g_print ("\nStill Alive:\n");
 
-  _dump_object_list (objects);
+  G_LOCK (gobject_list);
+  _dump_object_list (gobject_list_state.objects);
+  G_UNLOCK (gobject_list);
 }
 
 static void *
@@ -217,11 +241,13 @@ get_func (const char *func_name)
   void *func;
   char *error;
 
-  if (G_UNLIKELY (handle == NULL))
+  if (G_UNLIKELY (g_once_init_enter (&handle)))
     {
-      handle = dlopen("libgobject-2.0.so.0", RTLD_LAZY);
+      void *_handle;
 
-      if (handle == NULL)
+      _handle = dlopen("libgobject-2.0.so.0", RTLD_LAZY);
+
+      if (_handle == NULL)
         g_error ("Failed to open libgobject-2.0.so.0: %s", dlerror ());
 
       /* set up signal handlers */
@@ -229,9 +255,9 @@ get_func (const char *func_name)
       signal (SIGUSR2, _sig_usr2_handler);
 
       /* set up objects map */
-      objects = g_hash_table_new (NULL, NULL);
-      added = g_hash_table_new (NULL, NULL);
-      removed = g_hash_table_new_full (NULL, NULL, NULL, g_free);
+      gobject_list_state.objects = g_hash_table_new (NULL, NULL);
+      gobject_list_state.added = g_hash_table_new (NULL, NULL);
+      gobject_list_state.removed = g_hash_table_new_full (NULL, NULL, NULL, g_free);
 
       /* Set up exit handler */
       atexit (_exiting);
@@ -241,12 +267,16 @@ get_func (const char *func_name)
         {
           g_unsetenv ("LD_PRELOAD");
         }
+
+      g_once_init_leave (&handle, _handle);
     }
 
   func = dlsym (handle, func_name);
 
   if ((error = dlerror ()) != NULL)
     g_error ("Failed to find symbol: %s", error);
+
+  G_UNLOCK (gobject_list);
 
   return func;
 }
@@ -255,6 +285,8 @@ static void
 _object_finalized (gpointer data,
     GObject *obj)
 {
+  G_LOCK (gobject_list);
+
   if (display_filter (DISPLAY_FLAG_CREATE))
     {
       g_print (" -- Finalized object %p, %s\n", obj, G_OBJECT_TYPE_NAME (obj));
@@ -262,12 +294,15 @@ _object_finalized (gpointer data,
 
       /* Only care about the object which were already existing during last
        * check point. */
-      if (g_hash_table_lookup (added, obj) == NULL)
-        g_hash_table_insert (removed, obj, g_strdup (G_OBJECT_TYPE_NAME (obj)));
+      if (g_hash_table_lookup (gobject_list_state.added, obj) == NULL)
+        g_hash_table_insert (gobject_list_state.removed, obj,
+            g_strdup (G_OBJECT_TYPE_NAME (obj)));
     }
 
-  g_hash_table_remove (objects, obj);
-  g_hash_table_remove (added, obj);
+  g_hash_table_remove (gobject_list_state.objects, obj);
+  g_hash_table_remove (gobject_list_state.added, obj);
+
+  G_UNLOCK (gobject_list);
 }
 
 gpointer
@@ -288,7 +323,9 @@ g_object_new (GType type,
 
   obj_name = G_OBJECT_TYPE_NAME (obj);
 
-  if (g_hash_table_lookup (objects, obj) == NULL &&
+  G_LOCK (gobject_list);
+
+  if (g_hash_table_lookup (gobject_list_state.objects, obj) == NULL &&
       object_filter (obj_name))
     {
       if (display_filter (DISPLAY_FLAG_CREATE))
@@ -297,11 +334,28 @@ g_object_new (GType type,
           print_trace();
         }
 
+      /* FIXME: For thread safety, GWeakRef should be used here, except it
+       * won’t give us notify callbacks. Perhaps an opportunistic combination
+       * of GWeakRef and g_object_weak_ref() — the former for safety, the latter
+       * for notifications (with the knowledge that due to races, some
+       * notifications may get omitted)?
+       *
+       * Alternatively, we could abuse GToggleRef. Inadvisable because other
+       * code could be using it.
+       *
+       * Alternatively, we could switch to a garbage-collection style of
+       * working, where gobject-list runs in its own thread and uses GWeakRefs
+       * to keep track of objects. Periodically, it would check the hash table
+       * and notify of which references have been nullified. */
       g_object_weak_ref (obj, _object_finalized, NULL);
 
-      g_hash_table_insert (objects, obj, GUINT_TO_POINTER (TRUE));
-      g_hash_table_insert (added, obj, GUINT_TO_POINTER (TRUE));
+      g_hash_table_insert (gobject_list_state.objects, obj,
+          GUINT_TO_POINTER (TRUE));
+      g_hash_table_insert (gobject_list_state.added, obj,
+          GUINT_TO_POINTER (TRUE));
     }
+
+  G_UNLOCK (gobject_list);
 
   return obj;
 }
