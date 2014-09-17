@@ -225,13 +225,30 @@ _sig_usr2_handler (int signal)
 }
 
 static void
-_exiting (void)
+print_still_alive (void)
 {
   g_print ("\nStill Alive:\n");
 
   G_LOCK (gobject_list);
   _dump_object_list (gobject_list_state.objects);
   G_UNLOCK (gobject_list);
+}
+
+static void
+_exiting (void)
+{
+  print_still_alive ();
+}
+
+/* Handle signals which terminate the process. We’re technically not allowed to
+ * call printf() from this signal handler, but we do anyway as it’s only a
+ * best-effort debugging tool. */
+static void
+_sig_bad_handler (int sig_num)
+{
+  signal (sig_num, SIG_DFL);
+  print_still_alive ();
+  raise (sig_num);
 }
 
 static void *
@@ -253,6 +270,10 @@ get_func (const char *func_name)
       /* set up signal handlers */
       signal (SIGUSR1, _sig_usr1_handler);
       signal (SIGUSR2, _sig_usr2_handler);
+      signal (SIGINT, _sig_bad_handler);
+      signal (SIGTERM, _sig_bad_handler);
+      signal (SIGABRT, _sig_bad_handler);
+      signal (SIGSEGV, _sig_bad_handler);
 
       /* set up objects map */
       gobject_list_state.objects = g_hash_table_new (NULL, NULL);
