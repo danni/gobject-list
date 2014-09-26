@@ -258,6 +258,8 @@ get_func (const char *func_name)
   void *func;
   char *error;
 
+  G_LOCK (gobject_list);
+
   if (G_UNLIKELY (g_once_init_enter (&handle)))
     {
       void *_handle;
