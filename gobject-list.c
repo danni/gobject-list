@@ -329,20 +329,18 @@ _object_finalized (gpointer data,
 }
 
 gpointer
-g_object_new (GType type,
-    const char *first,
-    ...)
+g_object_newv (GType object_type,
+               guint n_parameters,
+               GParameter *parameters)
 {
-  gpointer (* real_g_object_new_valist) (GType, const char *, va_list);
-  va_list var_args;
+  gpointer (* real_g_object_newv) (GType object_type,guint n_parameters,GParameter *parameters);
+
   GObject *obj;
   const char *obj_name;
 
-  real_g_object_new_valist = get_func ("g_object_new_valist");
+  real_g_object_newv = get_func ("g_object_newv");
 
-  va_start (var_args, first);
-  obj = real_g_object_new_valist (type, first, var_args);
-  va_end (var_args);
+  obj = real_g_object_newv (object_type, n_parameters, parameters);
 
   obj_name = G_OBJECT_TYPE_NAME (obj);
 
