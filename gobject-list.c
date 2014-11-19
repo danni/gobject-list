@@ -124,6 +124,10 @@ display_filter (DisplayFlags flags)
 
           g_strfreev (tokens);
         }
+#ifndef HAVE_LIBUNWIND
+      if (display_flags & DISPLAY_FLAG_BACKTRACE)
+        g_print ("Warning: backtrace is not available, it needs libunwind\n");
+#endif
 
       parsed = TRUE;
     }
@@ -171,6 +175,7 @@ print_trace (void)
 
       g_print ("#%d  %s + [0x%08x]\n", stack_num++, name, (unsigned int)off);
     }
+#endif
 }
 
 static void
@@ -190,7 +195,6 @@ _dump_object_list (GHashTable *hash)
           obj, G_OBJECT_TYPE_NAME (obj), obj->ref_count);
     }
   g_print ("%u objects\n", g_hash_table_size (hash));
-#endif
 }
 
 static void
