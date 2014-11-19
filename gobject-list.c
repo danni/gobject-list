@@ -166,10 +166,11 @@ print_trace (void)
       unw_word_t off;
       int result;
 
-      result = unw_get_proc_name (&cursor, name, sizeof (name) - 1, &off);
-      if (result < 0 && result != UNW_ENOMEM)
+      result = unw_get_proc_name (&cursor, name, sizeof (name), &off);
+      if (result < 0 && result != -UNW_ENOMEM)
         {
-          g_print ("Error getting proc name\n");
+          g_print ("Error getting frame: %s (%d)\n",
+                   unw_strerror (result), -result);
           break;
         }
 
