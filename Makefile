@@ -19,7 +19,7 @@ clean:
 	rm -f libgobject-list.so $(OBJS)
 
 %.o: %.c
-	$(CC) -fPIC -rdynamic -g -c -Wall ${FLAGS} ${BUILD_OPTIONS} $<
+	$(CC) -fPIC -rdynamic -g -c -Wall -Wextra ${FLAGS} ${BUILD_OPTIONS} $<
 
 libgobject-list.so: $(OBJS)
 ifeq ($(HAVE_LIBUNWIND), 1)
