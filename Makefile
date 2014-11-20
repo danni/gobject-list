@@ -1,4 +1,5 @@
 HAVE_LIBUNWIND=1
+WITH_ORIGINS_TRACE=1
 
 ifeq ($(HAVE_LIBUNWIND), 1)
 	optional_libs=libunwind
@@ -12,6 +13,11 @@ FLAGS=`pkg-config --cflags gobject-2.0`
 LIBS=`pkg-config --libs gobject-2.0 $(optional_libs)`
 
 OBJS = gobject-list.o
+
+ifeq ($(WITH_ORIGINS_TRACE), 1)
+	BUILD_OPTIONS+=-DWITH_ORIGINS_TRACE
+	OBJS += bt-tree.o
+endif
 
 all: libgobject-list.so
 .PHONY: all clean
