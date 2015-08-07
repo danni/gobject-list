@@ -81,6 +81,11 @@ static volatile ObjectData gobject_list_state = { NULL, };
  * may be called from multiple threads concurrently. */
 G_LOCK_DEFINE_STATIC (gobject_list);
 
+/* Global output mutex. We don't want multiple threads outputting their
+ * backtraces at the same time, otherwise the output becomes impossible to
+ * read */
+static GMutex output_mutex;
+
 
 static gboolean
 display_filter (DisplayFlags flags)
@@ -312,8 +317,12 @@ _object_finalized (gpointer data,
 
   if (display_filter (DISPLAY_FLAG_CREATE))
     {
+      g_mutex_lock(&output_mutex);
+
       g_print (" -- Finalized object %p, %s\n", obj, G_OBJECT_TYPE_NAME (obj));
       print_trace();
+
+      g_mutex_unlock(&output_mutex);
 
       /* Only care about the object which were already existing during last
        * check point. */
@@ -353,8 +362,12 @@ g_object_new (GType type,
     {
       if (display_filter (DISPLAY_FLAG_CREATE))
         {
+          g_mutex_lock(&output_mutex);
+
           g_print (" ++ Created object %p, %s\n", obj, obj_name);
           print_trace();
+
+          g_mutex_unlock(&output_mutex);
         }
 
       /* FIXME: For thread safety, GWeakRef should be used here, except it
@@ -401,9 +414,13 @@ g_object_ref (gpointer object)
 
   if (object_filter (obj_name) && display_filter (DISPLAY_FLAG_REFS))
     {
+      g_mutex_lock(&output_mutex);
+
       g_print (" +  Reffed object %p, %s; ref_count: %d -> %d\n",
           obj, obj_name, ref_count, obj->ref_count);
       print_trace();
+
+      g_mutex_unlock(&output_mutex);
     }
 
   return ret;
@@ -422,9 +439,13 @@ g_object_unref (gpointer object)
 
   if (object_filter (obj_name) && display_filter (DISPLAY_FLAG_REFS))
     {
+      g_mutex_lock(&output_mutex);
+
       g_print (" -  Unreffed object %p, %s; ref_count: %d -> %d\n",
           obj, obj_name, obj->ref_count, obj->ref_count - 1);
       print_trace();
+
+      g_mutex_unlock(&output_mutex);
     }
 
   real_g_object_unref (object);
