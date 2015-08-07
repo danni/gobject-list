@@ -328,59 +328,96 @@ _object_finalized (gpointer data,
   G_UNLOCK (gobject_list);
 }
 
+static void 
+_track_object(GObject* obj)
+{
+    const char* obj_name = G_OBJECT_TYPE_NAME (obj);
+
+    G_LOCK (gobject_list);
+
+    if (g_hash_table_lookup (gobject_list_state.objects, obj) == NULL &&
+        object_filter (obj_name))
+      {
+        if (display_filter (DISPLAY_FLAG_CREATE))
+          {
+            g_print (" ++ Created object %p, %s\n", obj, obj_name);
+            print_trace();
+          }
+
+        /* FIXME: For thread safety, GWeakRef should be used here, except it
+         * won’t give us notify callbacks. Perhaps an opportunistic combination
+         * of GWeakRef and g_object_weak_ref() — the former for safety, the latter
+         * for notifications (with the knowledge that due to races, some
+         * notifications may get omitted)?
+         *
+         * Alternatively, we could abuse GToggleRef. Inadvisable because other
+         * code could be using it.
+         *
+         * Alternatively, we could switch to a garbage-collection style of
+         * working, where gobject-list runs in its own thread and uses GWeakRefs
+         * to keep track of objects. Periodically, it would check the hash table
+         * and notify of which references have been nullified. */
+        g_object_weak_ref (obj, _object_finalized, NULL);
+
+        g_hash_table_insert (gobject_list_state.objects, obj,
+            GUINT_TO_POINTER (TRUE));
+        g_hash_table_insert (gobject_list_state.added, obj,
+            GUINT_TO_POINTER (TRUE));
+      }
+
+    G_UNLOCK (gobject_list);
+}
+
+GObject*
+g_object_new_valist (GType	  type,
+             const gchar *first,
+             va_list	  var_args)
+{
+
+    gpointer (*real_g_object_new_valist) (GType, const char *, va_list);
+    GObject *obj;
+
+    real_g_object_new_valist = get_func ("g_object_new_valist");
+
+    obj = (GObject*)real_g_object_new_valist (type, first, var_args);
+
+    _track_object(obj);
+    return obj;
+}
+
 gpointer
 g_object_new (GType type,
     const char *first,
     ...)
 {
-  gpointer (* real_g_object_new_valist) (GType, const char *, va_list);
+
+  gpointer (*real_g_object_new_valist) (GType, const char *, va_list);
   va_list var_args;
   GObject *obj;
-  const char *obj_name;
 
   real_g_object_new_valist = get_func ("g_object_new_valist");
 
   va_start (var_args, first);
-  obj = real_g_object_new_valist (type, first, var_args);
+  obj = (GObject*)real_g_object_new_valist (type, first, var_args);
   va_end (var_args);
 
-  obj_name = G_OBJECT_TYPE_NAME (obj);
-
-  G_LOCK (gobject_list);
-
-  if (g_hash_table_lookup (gobject_list_state.objects, obj) == NULL &&
-      object_filter (obj_name))
-    {
-      if (display_filter (DISPLAY_FLAG_CREATE))
-        {
-          g_print (" ++ Created object %p, %s\n", obj, obj_name);
-          print_trace();
-        }
-
-      /* FIXME: For thread safety, GWeakRef should be used here, except it
-       * won’t give us notify callbacks. Perhaps an opportunistic combination
-       * of GWeakRef and g_object_weak_ref() — the former for safety, the latter
-       * for notifications (with the knowledge that due to races, some
-       * notifications may get omitted)?
-       *
-       * Alternatively, we could abuse GToggleRef. Inadvisable because other
-       * code could be using it.
-       *
-       * Alternatively, we could switch to a garbage-collection style of
-       * working, where gobject-list runs in its own thread and uses GWeakRefs
-       * to keep track of objects. Periodically, it would check the hash table
-       * and notify of which references have been nullified. */
-      g_object_weak_ref (obj, _object_finalized, NULL);
-
-      g_hash_table_insert (gobject_list_state.objects, obj,
-          GUINT_TO_POINTER (TRUE));
-      g_hash_table_insert (gobject_list_state.added, obj,
-          GUINT_TO_POINTER (TRUE));
-    }
-
-  G_UNLOCK (gobject_list);
-
+  _track_object(obj);
   return obj;
+}
+
+gpointer
+g_object_newv (GType object_type,
+               guint n_parameters,
+               GParameter *parameters)
+{
+    GObject *obj;
+    gpointer (*real_g_object_newv )(GType object_type, guint n_parameters,GParameter *parameters);
+
+    real_g_object_newv = get_func ("g_object_newv");
+
+    obj = (GObject*)real_g_object_newv(object_type,n_parameters,parameters);
+    _track_object(obj);
+    return obj;
 }
 
 gpointer
