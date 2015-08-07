@@ -7,7 +7,7 @@ else
 	optional_libs=
 endif
 
-CFLAGS=`pkg-config --cflags glib-2.0`
+FLAGS=`pkg-config --cflags glib-2.0`
 LIBS=`pkg-config --libs glib-2.0` $(optional_libs)
 
 
@@ -21,5 +21,5 @@ ifeq ($(HAVE_LIBUNWIND), 1)
 else
 	@echo "Building without backtrace support (libunwind disabled)"
 endif
-	gcc -fPIC -rdynamic -g -c -Wall ${CFLAGS} ${BUILD_OPTIONS} $<
-	gcc -shared -Wl,-soname,$@ -o $@ gobject-list.o -lc -ldl ${LIBS}
+	$(CC) -fPIC -rdynamic -g -c -Wall ${FLAGS} ${BUILD_OPTIONS} $<
+	$(CC) -shared -Wl,-soname,$@ -o $@ gobject-list.o -lc -ldl ${LIBS}
