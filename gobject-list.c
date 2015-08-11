@@ -124,6 +124,10 @@ display_filter (DisplayFlags flags)
 
           g_strfreev (tokens);
         }
+#ifndef HAVE_LIBUNWIND
+      if (display_flags & DISPLAY_FLAG_BACKTRACE)
+        g_print ("Warning: backtrace is not available, it needs libunwind\n");
+#endif
 
       parsed = TRUE;
     }
@@ -162,15 +166,17 @@ print_trace (void)
       unw_word_t off;
       int result;
 
-      result = unw_get_proc_name (&cursor, name, sizeof (name) - 1, &off);
-      if (result < 0 && result != UNW_ENOMEM)
+      result = unw_get_proc_name (&cursor, name, sizeof (name), &off);
+      if (result < 0 && result != -UNW_ENOMEM)
         {
-          g_print ("Error getting proc name\n");
+          g_print ("Error getting frame: %s (%d)\n",
+                   unw_strerror (result), -result);
           break;
         }
 
       g_print ("#%d  %s + [0x%08x]\n", stack_num++, name, (unsigned int)off);
     }
+#endif
 }
 
 static void
@@ -190,11 +196,10 @@ _dump_object_list (GHashTable *hash)
           obj, G_OBJECT_TYPE_NAME (obj), obj->ref_count);
     }
   g_print ("%u objects\n", g_hash_table_size (hash));
-#endif
 }
 
 static void
-_sig_usr1_handler (int signal)
+_sig_usr1_handler (G_GNUC_UNUSED int signal)
 {
   g_print ("Living Objects:\n");
 
@@ -204,7 +209,7 @@ _sig_usr1_handler (int signal)
 }
 
 static void
-_sig_usr2_handler (int signal)
+_sig_usr2_handler (G_GNUC_UNUSED int signal)
 {
   GHashTableIter iter;
   gpointer obj, type;
@@ -310,7 +315,7 @@ get_func (const char *func_name)
 }
 
 static void
-_object_finalized (gpointer data,
+_object_finalized (G_GNUC_UNUSED gpointer data,
     GObject *obj)
 {
   G_LOCK (gobject_list);
