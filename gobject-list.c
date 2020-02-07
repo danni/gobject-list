@@ -24,6 +24,13 @@
  */
 #include <glib-object.h>
 
+/**
+ * In later versions of GLib, g_object_ref is defined as a macro to make the
+ * return value match the type of the ref'ed object, which conflicts with our
+ * declaration below.
+ */
+#undef g_object_ref
+
 #include <dlfcn.h>
 #include <signal.h>
 #include <string.h>
