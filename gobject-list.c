@@ -23,6 +23,7 @@
  *     Philip Withnall  <philip.withnall@collabora.co.uk>
  */
 #include <glib-object.h>
+#include <glib/gprintf.h>
 
 /**
  * In later versions of GLib, g_object_ref is defined as a macro to make the
@@ -133,7 +134,7 @@ display_filter (DisplayFlags flags)
         }
 #ifndef HAVE_LIBUNWIND
       if (display_flags & DISPLAY_FLAG_BACKTRACE)
-        g_print ("Warning: backtrace is not available, it needs libunwind\n");
+        g_fprintf (stderr, "Warning: backtrace is not available, it needs libunwind\n");
 #endif
 
       parsed = TRUE;
@@ -176,12 +177,12 @@ print_trace (void)
       result = unw_get_proc_name (&cursor, name, sizeof (name), &off);
       if (result < 0 && result != -UNW_ENOMEM)
         {
-          g_print ("Error getting frame: %s (%d)\n",
+          g_fprintf (stderr, "Error getting frame: %s (%d)\n",
                    unw_strerror (result), -result);
           break;
         }
 
-      g_print ("#%d  %s + [0x%08x]\n", stack_num++, name, (unsigned int)off);
+      g_fprintf (stderr, "#%d  %s + [0x%08x]\n", stack_num++, name, (unsigned int)off);
     }
 #endif
 }
@@ -199,16 +200,16 @@ _dump_object_list (GHashTable *hash)
       if (obj == NULL || obj->ref_count == 0)
         continue;
 
-      g_print (" - %p, %s: %u refs\n",
+      g_fprintf (stderr, " - %p, %s: %u refs\n",
           obj, G_OBJECT_TYPE_NAME (obj), obj->ref_count);
     }
-  g_print ("%u objects\n", g_hash_table_size (hash));
+  g_fprintf (stderr, "%u objects\n", g_hash_table_size (hash));
 }
 
 static void
 _sig_usr1_handler (G_GNUC_UNUSED int signal)
 {
-  g_print ("Living Objects:\n");
+  g_fprintf (stderr, "Living Objects:\n");
 
   G_LOCK (gobject_list);
   _dump_object_list (gobject_list_state.objects);
@@ -223,20 +224,20 @@ _sig_usr2_handler (G_GNUC_UNUSED int signal)
 
   G_LOCK (gobject_list);
 
-  g_print ("Added Objects:\n");
+  g_fprintf (stderr, "Added Objects:\n");
   _dump_object_list (gobject_list_state.added);
 
-  g_print ("\nRemoved Objects:\n");
+  g_fprintf (stderr, "\nRemoved Objects:\n");
   g_hash_table_iter_init (&iter, gobject_list_state.removed);
   while (g_hash_table_iter_next (&iter, &obj, &type))
     {
-      g_print (" - %p, %s\n", obj, (gchar *) type);
+      g_fprintf (stderr, " - %p, %s\n", obj, (gchar *) type);
     }
-  g_print ("%u objects\n", g_hash_table_size (gobject_list_state.removed));
+  g_fprintf (stderr, "%u objects\n", g_hash_table_size (gobject_list_state.removed));
 
   g_hash_table_remove_all (gobject_list_state.added);
   g_hash_table_remove_all (gobject_list_state.removed);
-  g_print ("\nSaved new check point\n");
+  g_fprintf (stderr, "\nSaved new check point\n");
 
   G_UNLOCK (gobject_list);
 }
@@ -244,7 +245,7 @@ _sig_usr2_handler (G_GNUC_UNUSED int signal)
 static void
 print_still_alive (void)
 {
-  g_print ("\nStill Alive:\n");
+  g_fprintf (stderr, "\nStill Alive:\n");
 
   G_LOCK (gobject_list);
   _dump_object_list (gobject_list_state.objects);
@@ -331,7 +332,7 @@ _object_finalized (G_GNUC_UNUSED gpointer data,
     {
       g_mutex_lock(&output_mutex);
 
-      g_print (" -- Finalized object %p, %s\n", obj, G_OBJECT_TYPE_NAME (obj));
+      g_fprintf (stderr, " -- Finalized object %p, %s\n", obj, G_OBJECT_TYPE_NAME (obj));
       print_trace();
 
       g_mutex_unlock(&output_mutex);
@@ -376,7 +377,7 @@ g_object_new (GType type,
         {
           g_mutex_lock(&output_mutex);
 
-          g_print (" ++ Created object %p, %s\n", obj, obj_name);
+          g_fprintf (stderr, " ++ Created object %p, %s\n", obj, obj_name);
           print_trace();
 
           g_mutex_unlock(&output_mutex);
@@ -428,7 +429,7 @@ g_object_ref (gpointer object)
     {
       g_mutex_lock(&output_mutex);
 
-      g_print (" +  Reffed object %p, %s; ref_count: %d -> %d\n",
+      g_fprintf (stderr, " +  Reffed object %p, %s; ref_count: %d -> %d\n",
           obj, obj_name, ref_count, obj->ref_count);
       print_trace();
 
@@ -453,7 +454,7 @@ g_object_unref (gpointer object)
     {
       g_mutex_lock(&output_mutex);
 
-      g_print (" -  Unreffed object %p, %s; ref_count: %d -> %d\n",
+      g_fprintf (stderr, " -  Unreffed object %p, %s; ref_count: %d -> %d\n",
           obj, obj_name, obj->ref_count, obj->ref_count - 1);
       print_trace();
 
