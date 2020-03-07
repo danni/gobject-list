@@ -41,14 +41,20 @@
 #include <libunwind.h>
 #endif
 
+#ifdef WITH_ORIGINS_TRACE
+#include "bt-tree.h"
+#endif
+
 typedef enum
 {
   DISPLAY_FLAG_NONE = 0,
   DISPLAY_FLAG_CREATE = 1,
   DISPLAY_FLAG_REFS = 1 << 2,
   DISPLAY_FLAG_BACKTRACE = 1 << 3,
+  DISPLAY_FLAG_TRACEREFS = 1 << 4,
   DISPLAY_FLAG_ALL =
-      DISPLAY_FLAG_CREATE | DISPLAY_FLAG_REFS | DISPLAY_FLAG_BACKTRACE,
+      DISPLAY_FLAG_CREATE | DISPLAY_FLAG_REFS | DISPLAY_FLAG_BACKTRACE |
+      DISPLAY_FLAG_TRACEREFS,
   DISPLAY_FLAG_DEFAULT = DISPLAY_FLAG_CREATE,
 } DisplayFlags;
 
@@ -64,6 +70,7 @@ DisplayFlagsMapItem display_flags_map[] =
   { "create", DISPLAY_FLAG_CREATE },
   { "refs", DISPLAY_FLAG_REFS },
   { "backtrace", DISPLAY_FLAG_BACKTRACE },
+  { "tracerefs", DISPLAY_FLAG_TRACEREFS },
   { "all", DISPLAY_FLAG_ALL },
 };
 
@@ -78,6 +85,11 @@ typedef struct {
    * We keep the string representing the type of the object as we won't be able
    * to get it when displaying later as the object would have been destroyed. */
   GHashTable *removed;  /* owned */
+
+#ifdef WITH_ORIGINS_TRACE
+  /* GObject -> BtTrie */
+  GHashTable *origins; /* owned */
+#endif
 } ObjectData;
 
 /* Global static state, which must be accessed with the @gobject_list mutex
@@ -135,6 +147,10 @@ display_filter (DisplayFlags flags)
       if (display_flags & DISPLAY_FLAG_BACKTRACE)
         g_print ("Warning: backtrace is not available, it needs libunwind\n");
 #endif
+#ifndef WITH_ORIGINS_TRACE
+      if (display_flags & DISPLAY_FLAG_TRACEREFS)
+        g_print ("Warning: tracerefs is not available, it needs libunwind\n");
+#endif
 
       parsed = TRUE;
     }
@@ -151,6 +167,49 @@ object_filter (const char *obj_name)
     return TRUE;
   else
     return (strncmp (filter, obj_name, strlen (filter)) == 0);
+}
+
+static void
+save_trace (const char *key, gboolean is_ref)
+{
+#if defined(HAVE_LIBUNWIND) && defined(WITH_ORIGINS_TRACE)
+  unw_context_t uc;
+  unw_cursor_t cursor;
+  GPtrArray *trace;
+  BtTrie *root = NULL;
+  gboolean found;
+
+  if (!display_filter (DISPLAY_FLAG_TRACEREFS))
+    return;
+
+  trace = g_ptr_array_sized_new (10);
+
+  unw_getcontext (&uc);
+  unw_init_local (&cursor, &uc);
+
+  while (unw_step (&cursor) > 0)
+    {
+      gchar name[129];
+      unw_word_t off;
+      int result;
+
+      result = unw_get_proc_name (&cursor, name, sizeof (name), &off);
+      if (result < 0 && result != -UNW_ENOMEM)
+        break;
+
+      g_ptr_array_insert (trace, -1, g_strdup (name));
+    }
+
+  found = g_hash_table_lookup_extended (gobject_list_state.origins,
+                                        (gpointer) key,
+                                        NULL, (gpointer *)&root);
+  if (!found) {
+    root = bt_create (g_strdup (key));
+    g_hash_table_insert (gobject_list_state.origins, (gpointer) key, root);
+  }
+  bt_insert (root, trace, is_ref);
+  g_ptr_array_unref (trace);
+#endif
 }
 
 static void
@@ -241,6 +300,17 @@ _sig_usr2_handler (G_GNUC_UNUSED int signal)
   G_UNLOCK (gobject_list);
 }
 
+#ifdef WITH_ORIGINS_TRACE
+static void
+print_refs (G_GNUC_UNUSED gpointer key, gpointer value, gpointer user_data)
+{
+  gint *no = (gpointer) user_data;
+  BtTrie *bt_trie = value;
+  g_print ("#%d\n", ++*no);
+  bt_print_tree (bt_trie, 0);
+}
+#endif
+
 static void
 print_still_alive (void)
 {
@@ -248,6 +318,13 @@ print_still_alive (void)
 
   G_LOCK (gobject_list);
   _dump_object_list (gobject_list_state.objects);
+#ifdef WITH_ORIGINS_TRACE
+  if (display_filter (DISPLAY_FLAG_TRACEREFS)) {
+    guint no = 0;
+    g_print ("\nReferences:\n");
+    g_hash_table_foreach (gobject_list_state.origins, print_refs, (gpointer) &no);
+  }
+#endif
   G_UNLOCK (gobject_list);
 }
 
@@ -298,6 +375,10 @@ get_func (const char *func_name)
       gobject_list_state.objects = g_hash_table_new (NULL, NULL);
       gobject_list_state.added = g_hash_table_new (NULL, NULL);
       gobject_list_state.removed = g_hash_table_new_full (NULL, NULL, NULL, g_free);
+#ifdef WITH_ORIGINS_TRACE
+      gobject_list_state.origins =
+            g_hash_table_new_full (NULL, NULL, NULL, (GDestroyNotify) bt_free);
+#endif
 
       /* Set up exit handler */
       atexit (_exiting);
@@ -345,6 +426,9 @@ _object_finalized (G_GNUC_UNUSED gpointer data,
 
   g_hash_table_remove (gobject_list_state.objects, obj);
   g_hash_table_remove (gobject_list_state.added, obj);
+#ifdef WITH_ORIGINS_TRACE
+  g_hash_table_remove (gobject_list_state.origins, G_OBJECT_TYPE_NAME (obj));
+#endif
 
   G_UNLOCK (gobject_list);
 }
@@ -378,6 +462,7 @@ g_object_new (GType type,
 
           g_print (" ++ Created object %p, %s\n", obj, obj_name);
           print_trace();
+          save_trace (obj_name, TRUE);
 
           g_mutex_unlock(&output_mutex);
         }
@@ -431,6 +516,7 @@ g_object_ref (gpointer object)
       g_print (" +  Reffed object %p, %s; ref_count: %d -> %d\n",
           obj, obj_name, ref_count, obj->ref_count);
       print_trace();
+      save_trace (obj_name, TRUE);
 
       g_mutex_unlock(&output_mutex);
     }
@@ -456,6 +542,7 @@ g_object_unref (gpointer object)
       g_print (" -  Unreffed object %p, %s; ref_count: %d -> %d\n",
           obj, obj_name, obj->ref_count, obj->ref_count - 1);
       print_trace();
+      save_trace (obj_name, FALSE);
 
       g_mutex_unlock(&output_mutex);
     }
