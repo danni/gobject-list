@@ -150,7 +150,7 @@ object_filter (const char *obj_name)
   if (filter == NULL)
     return TRUE;
   else
-    return (strncmp (filter, obj_name, strlen (filter)) == 0);
+    return (g_strcmp0 (filter, obj_name) == 0);
 }
 
 static void
